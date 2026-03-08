@@ -2,636 +2,69 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const { pathname, searchParams } = url;
+    const cookie = request.headers.get("Cookie") || "";
+    const isAuthed = cookie.includes(`auth=${env.ADMIN_PASSWORD}`);
 
-    // ====== 详情页：/?id=xxx ======
+    if (pathname === "/login" && request.method === "POST") {
+      const { password } = await request.json();
+      if (password === env.ADMIN_PASSWORD) {
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            "Set-Cookie": `auth=${password}; Path=/; HttpOnly; Max-Age=2592000; SameSite=Strict`,
+            "Content-Type": "application/json"
+          }
+        });
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 401 });
+    }
+
+    if (pathname === "/logout") {
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          "Set-Cookie": `auth=; Path=/; HttpOnly; Max-Age=0; SameSite=Strict`,
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    const isPublicPage = pathname === "/" && searchParams.get("id");
+    if (!isAuthed && !isPublicPage) {
+      return new Response(renderLoginPage(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+
     if (pathname === "/" && searchParams.get("id")) {
       const id = searchParams.get("id");
       const note = await env.NOTES.get(id);
       if (!note) return new Response("Not Found", { status: 404 });
       const data = JSON.parse(note);
-
-      return new Response(
-        `<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8" />
-<title>${escapeHtml(data.title || "无标题")}</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    margin:0;
-    padding:1.5rem;
-    font-family:"SimSun","Songti SC",serif;
-    background:#fdfaf2;
-    color:#2b2118;
-  }
-  .page {
-    max-width:800px;
-    margin:0 auto;
-    background:#fffcf5;
-    border:1px solid #d8c7a3;
-    border-radius:8px;
-    padding:1.5rem 1.8rem;
-    box-shadow:0 10px 25px rgba(0,0,0,0.12);
-  }
-  .title {
-    text-align:center;
-    font-size:1.6rem;
-    letter-spacing:0.25em;
-    margin-bottom:0.8rem;
-  }
-  .meta {
-    text-align:center;
-    font-size:0.85rem;
-    color:#8a7a68;
-    margin-bottom:1rem;
-  }
-  .tag {
-    display:inline-block;
-    padding:0.1rem 0.5rem;
-    border-radius:999px;
-    border:1px solid #c9b89a;
-    margin:0 0.2rem;
-    font-size:0.8rem;
-  }
-  .content p { text-indent:2em; margin:0.4rem 0; }
-  .back {
-    display:inline-block;
-    margin-bottom:0.8rem;
-    font-size:0.85rem;
-    color:#7a5b3a;
-    text-decoration:none;
-  }
-  .theme-toggle {
-    position:fixed;
-    right:1rem;
-    top:1rem;
-    padding:0.3rem 0.8rem;
-    border-radius:999px;
-    border:1px solid #c9b89a;
-    background:#fffaf0;
-    font-size:0.8rem;
-    cursor:pointer;
-  }
-  body.dark { background:#111; color:#f5f0e6; }
-  body.dark .page { background:#1b1815; border-color:#bda57a; }
-  body.dark .meta { color:#c0b09c; }
-  body.dark .tag { border-color:#bda57a; color:#f5f0e6; }
-  body.dark .theme-toggle { background:#1b1815; color:#f5f0e6; border-color:#bda57a; }
-</style>
-</head>
-<body>
-<button class="theme-toggle" id="themeToggle">切换主题</button>
-<div class="page">
-  <a href="/" class="back">← 返回首页</a>
-  <div class="title">${escapeHtml(data.title || "无标题")}</div>
-  <div class="meta">
-    ${
-      (data.tags && data.tags.length)
-        ? data.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join("")
-        : "无标签"
-    }
-  </div>
-  <div class="content" id="content"></div>
-</div>
-<script>
-  const raw = ${JSON.stringify(data.content || "")};
-  document.getElementById("content").innerHTML = raw
-    .split(/\\n\\n+/)
-    .map(p => "<p>" + p.replace(/\\n/g,"<br>") + "</p>")
-    .join("");
-
-  const theme = localStorage.getItem("theme") || "light";
-  if (theme === "dark") document.body.classList.add("dark");
-  document.getElementById("themeToggle").onclick = () => {
-    document.body.classList.toggle("dark");
-    localStorage.setItem("theme",
-      document.body.classList.contains("dark") ? "dark" : "light"
-    );
-  };
-</script>
-</body>
-</html>`,
-        { headers: { "Content-Type": "text/html; charset=utf-8" } }
-      );
-    }
-
-    // ====== 首页：编辑器 + 列表 ======
-    if (pathname === "/" && request.method === "GET") {
-      return new Response(
-        `<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8" />
-<title>极简手记 · 宣纸</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    margin:0;
-    font-family:"SimSun","Songti SC",serif;
-    background:#fdfaf2;
-    color:#2b2118;
-  }
-  .shell {
-    max-width:1100px;
-    margin:0 auto;
-    padding:1.5rem 1.2rem 2.5rem;
-  }
-  header { text-align:center; margin-bottom:1rem; }
-  header h1 {
-    margin:0;
-    font-size:2rem;
-    letter-spacing:0.3em;
-  }
-  header p {
-    margin:0.4rem 0 0;
-    font-size:0.9rem;
-    color:#8a7a68;
-  }
-  .top-bar {
-    margin-top:1rem;
-    display:flex;
-    gap:0.8rem;
-    align-items:center;
-  }
-  .top-bar input {
-    flex:1;
-    padding:0.35rem 0.6rem;
-    border-radius:999px;
-    border:1px solid #c9b89a;
-    background:#fffcf5;
-    font-family:"SimSun","Songti SC",serif;
-  }
-  .tag-filter {
-    display:flex;
-    flex-wrap:wrap;
-    gap:0.3rem;
-    font-size:0.8rem;
-  }
-  .tag-pill {
-    padding:0.1rem 0.5rem;
-    border-radius:999px;
-    border:1px solid #c9b89a;
-    background:#fffaf0;
-    cursor:pointer;
-  }
-  .tag-pill.active {
-    background:#7a5b3a;
-    color:#fdfaf2;
-    border-color:#7a5b3a;
-  }
-  .theme-toggle {
-    padding:0.3rem 0.8rem;
-    border-radius:999px;
-    border:1px solid #c9b89a;
-    background:#fffaf0;
-    font-size:0.8rem;
-    cursor:pointer;
-  }
-  main {
-    margin-top:1.2rem;
-    display:grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr);
-    gap:1rem;
-  }
-  .panel {
-    background:#fffcf5;
-    border-radius:8px;
-    border:1px solid #d8c7a3;
-    padding:1rem 1.1rem 1.2rem;
-  }
-  .panel h2 {
-    margin:0 0 0.6rem;
-    font-size:1.1rem;
-    letter-spacing:0.15em;
-  }
-  .field-label {
-    font-size:0.8rem;
-    color:#8a7a68;
-    margin:0.3rem 0 0.15rem;
-  }
-  input[type="text"], textarea {
-    width:100%;
-    box-sizing:border-box;
-    padding:0.35rem 0.5rem;
-    border-radius:6px;
-    border:1px solid #c9b89a;
-    background:#fffdf7;
-    font-family:"SimSun","Songti SC",serif;
-    font-size:0.9rem;
-  }
-  textarea { height:200px; resize:vertical; }
-  .hint { font-size:0.75rem; color:#a08c76; }
-  .editor-row {
-    display:grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap:0.6rem;
-    margin-top:0.4rem;
-  }
-  #preview {
-    border-radius:6px;
-    border:1px solid #c9b89a;
-    padding:0.4rem 0.5rem;
-    background:#fffdf7;
-    font-size:0.9rem;
-    overflow:auto;
-  }
-  #preview p { margin:0.3rem 0; text-indent:2em; }
-  .btn-row {
-    margin-top:0.5rem;
-    display:flex;
-    gap:0.5rem;
-    align-items:center;
-  }
-  button {
-    padding:0.35rem 0.9rem;
-    border-radius:999px;
-    border:none;
-    cursor:pointer;
-    font-family:"SimSun","Songti SC",serif;
-    font-size:0.85rem;
-  }
-  .btn-primary { background:#7a5b3a; color:#fdfaf2; }
-  .btn-ghost {
-    background:transparent;
-    border:1px solid #c9b89a;
-    color:#7a5b3a;
-  }
-  .autosave-status {
-    font-size:0.75rem;
-    color:#a08c76;
-  }
-  .note-group-title {
-    font-size:0.85rem;
-    color:#8a7a68;
-    margin:0.3rem 0;
-  }
-  .note-card {
-    border-radius:6px;
-    border:1px solid #d8c7a3;
-    padding:0.45rem 0.55rem;
-    margin-bottom:0.4rem;
-    background:#fffdf7;
-  }
-  .note-header {
-    display:flex;
-    justify-content:space-between;
-    gap:0.4rem;
-    align-items:center;
-  }
-  .note-title {
-    font-size:0.9rem;
-    font-weight:bold;
-  }
-  .note-tags {
-    font-size:0.75rem;
-    color:#8a7a68;
-    display:flex;
-    flex-wrap:wrap;
-    gap:0.2rem;
-  }
-  .note-tag-pill {
-    padding:0.05rem 0.4rem;
-    border-radius:999px;
-    border:1px solid #c9b89a;
-  }
-  .note-snippet {
-    margin-top:0.3rem;
-    font-size:0.8rem;
-    color:#8a7a68;
-    max-height:2.4em;
-    overflow:hidden;
-  }
-  .note-actions {
-    margin-top:0.3rem;
-    display:flex;
-    gap:0.3rem;
-    flex-wrap:wrap;
-  }
-  .note-actions button {
-    padding:0.2rem 0.6rem;
-    font-size:0.75rem;
-  }
-
-  body.dark { background:#111; color:#f5f0e6; }
-  body.dark .panel { background:#1b1815; border-color:#bda57a; }
-  body.dark header p,
-  body.dark .field-label,
-  body.dark .hint,
-  body.dark .note-group-title { color:#c0b09c; }
-  body.dark input[type="text"],
-  body.dark textarea,
-  body.dark #preview {
-    background:#1b1815;
-    border-color:#bda57a;
-    color:#f5f0e6;
-  }
-  body.dark .note-card {
-    background:#1b1815;
-    border-color:#bda57a;
-  }
-  body.dark .note-tag-pill { border-color:#bda57a; color:#f5f0e6; }
-  body.dark .btn-ghost {
-    border-color:#bda57a;
-    color:#f5f0e6;
-  }
-  body.dark .btn-primary {
-    background:#b88a4a;
-    color:#111;
-  }
-  body.dark .theme-toggle {
-    background:#1b1815;
-    color:#f5f0e6;
-    border-color:#bda57a;
-  }
-</style>
-</head>
-<body>
-<div class="shell">
-  <header>
-    <h1>极 简 手 记</h1>
-    <p>宣纸一页，记下当下心绪与思考。</p>
-    <div class="top-bar">
-      <input id="searchInput" placeholder="搜索标题或内容…" />
-      <div class="tag-filter" id="tagFilter"></div>
-      <button class="theme-toggle" id="themeToggle">切换主题</button>
-    </div>
-  </header>
-
-  <main>
-    <section class="panel">
-      <h2>新 记</h2>
-      <div class="field-label">标题</div>
-      <input id="title" placeholder="如：长野的夜与一杯热茶" />
-      <div class="field-label">标签（逗号分隔）</div>
-      <input id="tags" placeholder="如：生活, 想法, 阅读" />
-      <div class="hint">示例：工作, 想法, 日记, 技术, 读书笔记</div>
-      <div class="field-label">正文</div>
-      <div class="editor-row">
-        <textarea id="content" placeholder="写点什么吧……"></textarea>
-        <div id="preview"></div>
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="saveBtn">保存</button>
-        <button class="btn-ghost" id="clearDraftBtn">清除草稿</button>
-        <span class="autosave-status" id="autosaveStatus">草稿自动保存中…</span>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>手 记 一 览</h2>
-      <div class="note-group-title">未归档</div>
-      <div id="notes"></div>
-      <div class="note-group-title">已归档</div>
-      <div id="archived"></div>
-    </section>
-  </main>
-</div>
-
-<script>
-  const API = location.origin;
-  const titleInput = document.getElementById("title");
-  const tagsInput = document.getElementById("tags");
-  const contentInput = document.getElementById("content");
-  const previewDiv = document.getElementById("preview");
-  const autosaveStatus = document.getElementById("autosaveStatus");
-  const saveBtn = document.getElementById("saveBtn");
-  const clearDraftBtn = document.getElementById("clearDraftBtn");
-  const searchInput = document.getElementById("searchInput");
-  const tagFilterDiv = document.getElementById("tagFilter");
-  const themeToggle = document.getElementById("themeToggle");
-  const notesDiv = document.getElementById("notes");
-  const archivedDiv = document.getElementById("archived");
-
-  let allNotes = [];
-  let activeTag = null;
-  let autosaveTimer = null;
-
-  function renderPreview() {
-    const raw = contentInput.value || "";
-    previewDiv.innerHTML = raw
-      .split(/\\n\\n+/)
-      .map(p => "<p>" + p.replace(/\\n/g,"<br>") + "</p>")
-      .join("");
-  }
-
-  function scheduleAutosave() {
-    autosaveStatus.textContent = "草稿自动保存中…";
-    if (autosaveTimer) clearTimeout(autosaveTimer);
-    autosaveTimer = setTimeout(() => {
-      const draft = {
-        title: titleInput.value || "",
-        tags: tagsInput.value || "",
-        content: contentInput.value || ""
-      };
-      localStorage.setItem("noteDraft", JSON.stringify(draft));
-      autosaveStatus.textContent = "草稿已保存";
-    }, 600);
-  }
-
-  function loadDraft() {
-    const raw = localStorage.getItem("noteDraft");
-    if (!raw) return;
-    try {
-      const d = JSON.parse(raw);
-      titleInput.value = d.title || "";
-      tagsInput.value = d.tags || "";
-      contentInput.value = d.content || "";
-      renderPreview();
-      autosaveStatus.textContent = "已加载草稿";
-    } catch {}
-  }
-
-  clearDraftBtn.onclick = () => {
-    localStorage.removeItem("noteDraft");
-    titleInput.value = "";
-    tagsInput.value = "";
-    contentInput.value = "";
-    previewDiv.innerHTML = "";
-    autosaveStatus.textContent = "草稿已清除";
-  };
-
-  contentInput.addEventListener("input", () => {
-    renderPreview();
-    scheduleAutosave();
-  });
-  titleInput.addEventListener("input", scheduleAutosave);
-  tagsInput.addEventListener("input", scheduleAutosave);
-
-  async function addNote() {
-    const title = titleInput.value.trim() || "无标题";
-    const content = contentInput.value.trim();
-    const tagsRaw = tagsInput.value.trim();
-    const tags = tagsRaw
-      ? tagsRaw.split(",").map(t => t.trim()).filter(Boolean)
-      : [];
-    const res = await fetch(API + "/note", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({ title, content, tags, archived:false })
-    });
-    const data = await res.json();
-    localStorage.removeItem("noteDraft");
-    titleInput.value = "";
-    tagsInput.value = "";
-    contentInput.value = "";
-    previewDiv.innerHTML = "";
-    autosaveStatus.textContent = "已保存并清除草稿";
-    await loadNotes();
-    alert("已保存，ID: " + data.id);
-  }
-
-  saveBtn.onclick = addNote;
-
-  async function loadNotes() {
-    const res = await fetch(API + "/notes");
-    const list = await res.json();
-    allNotes = [];
-    for (const item of list) {
-      const r = await fetch(API + "/note/" + item.name);
-      if (r.status !== 200) continue;
-      const n = await r.json();
-      allNotes.push({ id:item.name, ...n });
-    }
-    renderTagFilter();
-    renderNoteLists();
-  }
-
-  function renderTagFilter() {
-    const set = new Set();
-    allNotes.forEach(n => (n.tags || []).forEach(t => set.add(t)));
-    tagFilterDiv.innerHTML = "";
-    if (!set.size) {
-      tagFilterDiv.textContent = "暂无标签";
-      return;
-    }
-    const allBtn = document.createElement("span");
-    allBtn.className = "tag-pill" + (activeTag === null ? " active" : "");
-    allBtn.textContent = "全部";
-    allBtn.onclick = () => { activeTag = null; renderTagFilter(); renderNoteLists(); };
-    tagFilterDiv.appendChild(allBtn);
-    set.forEach(tag => {
-      const el = document.createElement("span");
-      el.className = "tag-pill" + (activeTag === tag ? " active" : "");
-      el.textContent = tag;
-      el.onclick = () => {
-        activeTag = (activeTag === tag ? null : tag);
-        renderTagFilter();
-        renderNoteLists();
-      };
-      tagFilterDiv.appendChild(el);
-    });
-  }
-
-  function matchSearch(note, q) {
-    if (!q) return true;
-    const s = q.toLowerCase();
-    return (
-      (note.title || "").toLowerCase().includes(s) ||
-      (note.content || "").toLowerCase().includes(s)
-    );
-  }
-
-  function matchTag(note) {
-    if (!activeTag) return true;
-    return (note.tags || []).includes(activeTag);
-  }
-
-  function renderNoteLists() {
-    const q = searchInput.value.trim();
-    notesDiv.innerHTML = "";
-    archivedDiv.innerHTML = "";
-    allNotes
-      .filter(n => matchSearch(n, q) && matchTag(n))
-      .forEach(n => {
-        const card = document.createElement("div");
-        card.className = "note-card";
-        const header = document.createElement("div");
-        header.className = "note-header";
-        const title = document.createElement("div");
-        title.className = "note-title";
-        title.textContent = n.title || "无标题";
-        const tags = document.createElement("div");
-        tags.className = "note-tags";
-        (n.tags || []).forEach(t => {
-          const span = document.createElement("span");
-          span.className = "note-tag-pill";
-          span.textContent = t;
-          tags.appendChild(span);
-        });
-        header.appendChild(title);
-        header.appendChild(tags);
-        const snippet = document.createElement("div");
-        snippet.className = "note-snippet";
-        snippet.textContent = (n.content || "").replace(/\\s+/g," ").slice(0,80);
-        const actions = document.createElement("div");
-        actions.className = "note-actions";
-        const viewBtn = document.createElement("button");
-        viewBtn.className = "btn-ghost";
-        viewBtn.textContent = "查看";
-        viewBtn.onclick = () => { location.href = "/?id=" + n.id; };
-        const delBtn = document.createElement("button");
-        delBtn.className = "btn-ghost";
-        delBtn.textContent = "删除";
-        delBtn.onclick = async () => {
-          if (!confirm("确认删除？")) return;
-          await fetch(API + "/note/" + n.id, { method:"DELETE" });
-          await loadNotes();
-        };
-        const archBtn = document.createElement("button");
-        archBtn.className = "btn-ghost";
-        archBtn.textContent = n.archived ? "取消归档" : "归档";
-        archBtn.onclick = async () => {
-          await fetch(API + "/note/" + n.id + "/archive", { method:"PUT" });
-          await loadNotes();
-        };
-        actions.appendChild(viewBtn);
-        actions.appendChild(archBtn);
-        actions.appendChild(delBtn);
-        card.appendChild(header);
-        card.appendChild(snippet);
-        card.appendChild(actions);
-        (n.archived ? archivedDiv : notesDiv).appendChild(card);
+      return new Response(renderDetailPage(data), {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
-  }
-
-  searchInput.addEventListener("input", renderNoteLists);
-
-  const theme = localStorage.getItem("theme") || "light";
-  if (theme === "dark") document.body.classList.add("dark");
-  themeToggle.onclick = () => {
-    document.body.classList.toggle("dark");
-    localStorage.setItem("theme",
-      document.body.classList.contains("dark") ? "dark" : "light"
-    );
-  };
-
-  loadDraft();
-  renderPreview();
-  loadNotes();
-</script>
-</body>
-</html>`,
-        { headers: { "Content-Type": "text/html; charset=utf-8" } }
-      );
     }
 
-    // ====== API：创建笔记 ======
+    if (pathname === "/" && request.method === "GET") {
+      return new Response(renderIndexPage(), {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+
+    if (!isAuthed) return new Response("Unauthorized", { status: 401 });
+
     if (pathname === "/note" && request.method === "POST") {
       const body = await request.json();
-      const id = crypto.randomUUID();
+      const id = Math.random().toString(36).slice(2, 10); 
       const note = {
-        title: body.title || "",
+        title: body.title || "无标题",
         content: body.content || "",
         tags: Array.isArray(body.tags) ? body.tags : [],
-        archived: !!body.archived,
         createdAt: Date.now()
       };
       await env.NOTES.put(id, JSON.stringify(note));
       return json({ id });
     }
 
-    // ====== API：获取单条 ======
     if (pathname.startsWith("/note/") && request.method === "GET") {
       const id = pathname.split("/")[2];
       const note = await env.NOTES.get(id);
@@ -639,25 +72,12 @@ export default {
       return json(JSON.parse(note));
     }
 
-    // ====== API：删除 ======
     if (pathname.startsWith("/note/") && request.method === "DELETE") {
       const id = pathname.split("/")[2];
       await env.NOTES.delete(id);
       return json({ ok: true });
     }
 
-    // ====== API：归档/取消归档 ======
-    if (pathname.startsWith("/note/") && pathname.endsWith("/archive") && request.method === "PUT") {
-      const id = pathname.split("/")[2];
-      const note = await env.NOTES.get(id);
-      if (!note) return new Response("Not Found", { status: 404 });
-      const data = JSON.parse(note);
-      data.archived = !data.archived;
-      await env.NOTES.put(id, JSON.stringify(data));
-      return json({ archived: data.archived });
-    }
-
-    // ====== API：列表（只返回 key） ======
     if (pathname === "/notes" && request.method === "GET") {
       const list = await env.NOTES.list();
       return json(list.keys);
@@ -667,16 +87,51 @@ export default {
   }
 };
 
-function json(obj) {
-  return new Response(JSON.stringify(obj), {
-    headers: { "Content-Type": "application/json; charset=utf-8" }
-  });
+function json(obj) { return new Response(JSON.stringify(obj), { headers: { "Content-Type": "application/json; charset=utf-8" } }); }
+function escapeHtml(str) { return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+function renderLoginPage() {
+  return `<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><title>身份验证</title><style>body{background:#f9f5ed;font-family:"Noto Serif SC","SimSun",serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.login-card{background:#fffdf9;padding:2.5rem;border-radius:12px;border:1px solid #e3d7bf;box-shadow:0 8px 30px rgba(165,145,115,0.1);text-align:center}input{padding:0.6rem 1rem;border:1px solid #dcd1b9;border-radius:999px;margin-bottom:1.2rem;width:220px;outline:none;background:#fffdf7;text-align:center}button{padding:0.6rem 2.5rem;background:#8b6d4d;color:#fffdf7;border:none;border-radius:999px;cursor:pointer}</style></head><body><div class="login-card"><h2>极简手记</h2><input type="password" id="pw" placeholder="请输入通行口令"/><br><button onclick="login()">开启</button></div><script>async function login(){const res=await fetch('/login',{method:'POST',body:JSON.stringify({password:document.getElementById('pw').value})});if(res.ok)location.reload();else alert('口令有误')}</script></body></html>`;
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g,"&amp;")
-    .replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;");
+function renderDetailPage(data) {
+  const title = escapeHtml(data.title || "无标题");
+  return `<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${title}</title><style>:root{color-scheme:light dark}body{margin:0;padding:1.5rem;font-family:"Noto Serif SC","SimSun",serif;background:#f9f5ed;color:#2b2118;line-height:1.8}.page{max-width:800px;margin:2rem auto;background:#fffdf9;border:1px solid #e3d7bf;border-radius:12px;padding:2.5rem;box-shadow:0 8px 30px rgba(165,145,115,0.08)}.title{text-align:center;font-size:1.8rem;letter-spacing:0.2em;margin-bottom:0.5rem}.meta{text-align:center;font-size:0.9rem;color:#8a7a68;margin-bottom:1.5rem}.tag{display:inline-block;padding:0.15rem 0.6rem;border-radius:999px;border:1px solid #dcd1b9;background:#efe8d9;margin:0 0.2rem;font-size:0.8rem;color:#6b5a45}hr{border:0;border-top:1px solid #e3d7bf;margin:2rem 0}.content p{text-indent:2em;margin:1.2rem 0}.back{display:inline-block;margin-bottom:1.5rem;font-size:0.9rem;color:#8b6d4d;text-decoration:none}body.dark{background:#161614;color:#d1c7b7}body.dark .page{background:#1f1f1d;border-color:#3d3a35}body.dark hr{border-color:#3d3a35}</style></head><body><div class="page"><a href="/" class="back">← 返回首页</a><div class="title">${title}</div><div class="meta">${(data.tags||[]).map(t=>'<span class="tag">'+escapeHtml(t)+'</span>').join("")}</div><hr><div class="content" id="content"></div></div><script>const raw=${JSON.stringify(data.content || "")};document.getElementById("content").innerHTML=raw.split(/\\n\\n+/).map(p=>"<p>"+p.replace(/\\n/g,"<br>")+"</p>").join("");</script></body></html>`;
+}
+
+function renderIndexPage() {
+  return `<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>极简手记 · 宣纸</title><style>:root{color-scheme:light dark}body{margin:0;font-family:"Noto Serif SC","SimSun",serif;background:#f9f5ed;color:#2b2118;line-height:1.6}.shell{max-width:1100px;margin:0 auto;padding:2rem 1.5rem}header{text-align:center;margin-bottom:2.5rem}header h1{margin:0;font-size:2.4rem;letter-spacing:0.4em;font-weight:normal}.top-bar{margin-top:1.5rem;display:flex;gap:1rem;justify-content:center;align-items:center}.top-bar input{width:300px;padding:0.5rem 1.2rem;border-radius:999px;border:1px solid #e3d7bf;background:#fffdf9;font-family:inherit;outline:none}.controls{display:flex;gap:0.6rem}.theme-toggle,.logout-btn{padding:0.4rem 1.2rem;border-radius:999px;border:1px solid #e3d7bf;background:#fffdf9;font-size:0.85rem;cursor:pointer}main{margin-top:2rem;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:2rem}.panel{background:#fffdf9;border-radius:12px;border:1px solid #e3d7bf;padding:1.5rem;box-shadow:0 8px 30px rgba(165,145,115,0.06)}.panel h2{margin:0 0 1.2rem;font-size:1.2rem;letter-spacing:0.2em;border-bottom:1px solid #f0e9d9;padding-bottom:0.6rem}input,textarea{width:100%;box-sizing:border-box;padding:0.7rem;border-radius:8px;border:1px solid #dcd1b9;background:#fffdfc;font-family:inherit;font-size:0.95rem;outline:none}textarea{height:250px;resize:vertical}#preview{border-radius:8px;border:1px solid #dcd1b9;padding:0.7rem;background:#fffdfc;font-size:0.95rem;overflow:auto;height:250px;color:#444}#preview p{margin:0.5rem 0;text-indent:2em}.btn-row{margin-top:1.2rem;display:flex;gap:1rem;align-items:center}.note-card{border-radius:10px;border:1px solid #e3d7bf;padding:1.2rem;margin-bottom:1rem;background:#fffdfc}.note-header{display:flex;justify-content:space-between;margin-bottom:0.6rem}.note-title{font-size:1.1rem;font-weight:500;color:#2b2118;}.action-btn{border:1px solid #dcd1b9;background:none;border-radius:999px;padding:0.2rem 0.8rem;cursor:pointer;font-size:0.8rem;color:#8b6d4d}body.dark{background:#161614;color:#d1c7b7}body.dark .panel,body.dark .note-card{background:#1f1f1d;border-color:#3d3a35}body.dark input,body.dark textarea,body.dark #preview{background:#262624;border-color:#4a463e;color:#d1c7b7}</style></head><body><div class="shell"><header><h1>极 简 手 记</h1><div class="top-bar"><input id="searchInput" placeholder="搜索手记内容..."/><div class="controls"><button class="theme-toggle" id="themeToggle">主题</button><button class="logout-btn" id="logoutBtn">退出</button></div></div></header><main><section class="panel"><h2>新 记</h2><input id="title" placeholder="标题..."/><div style="margin:1rem 0 0.4rem;font-size:0.85rem;color:#8a7a68">标签</div><input id="tags" placeholder="生活, 随笔"/><div style="margin:1rem 0 0.4rem;font-size:0.85rem;color:#8a7a68">正文</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem"><textarea id="content" placeholder="此刻在想什么..."></textarea><div id="preview"></div></div><div class="btn-row"><button id="saveBtn" style="background:#8b6d4d;color:#fffdf7;padding:0.6rem 2rem;border-radius:999px;border:none;cursor:pointer">保存</button><span id="wordCount" style="font-size:0.85rem;color:#8a7a68;margin-left:auto">0 字</span></div></section><section class="panel"><h2>手 记 一 览</h2><div id="notes"></div></section></main></div><script>
+  const titleInput=document.getElementById("title"),tagsInput=document.getElementById("tags"),contentInput=document.getElementById("content"),previewDiv=document.getElementById("preview"),saveBtn=document.getElementById("saveBtn"),notesDiv=document.getElementById("notes"),wordCount=document.getElementById("wordCount");
+  contentInput.oninput=()=>{
+    previewDiv.innerHTML=(contentInput.value||"").split(/\\n\\n+/).map(p=>"<p>"+p.replace(/\\n/g,"<br>")+"</p>").join("");
+    wordCount.textContent=contentInput.value.length+" 字";
+  };
+  async function loadNotes(){
+    const res=await fetch(location.origin+"/notes");const list=await res.json();notesDiv.innerHTML="";
+    let notesData = [];
+    for(const item of list){
+      const r=await fetch(location.origin+"/note/"+item.name);
+      if(r.ok){ const n=await r.json(); notesData.push({ id: item.name, ...n }); }
+    }
+    notesData.sort((a,b)=>b.createdAt - a.createdAt);
+    notesData.forEach(n=>{
+      const card=document.createElement("div");card.className="note-card";
+      card.innerHTML=\`<div class="note-header"><div class="note-title">\${n.title}</div></div><div style="font-size:0.95rem;color:#8a7a68;margin-bottom:1rem">\${n.content.slice(0,50)}...</div><div style="display:flex;gap:0.5rem"><button class="action-btn" onclick="location.href='/?id=\${n.id}'">查看</button><button class="action-btn" onclick="deleteNote('\${n.id}')">删除</button></div>\`;
+      notesDiv.appendChild(card);
+    });
+  }
+  async function deleteNote(id){
+    if(confirm("确定删除这篇手记吗？")){ await fetch(location.origin+"/note/"+id,{method:"DELETE"}); loadNotes(); }
+  }
+  saveBtn.onclick=async()=>{
+    await fetch(location.origin+"/note",{method:"POST",body:JSON.stringify({title:titleInput.value||"无标题",content:contentInput.value,tags:tagsInput.value.split(",")})});
+    titleInput.value=contentInput.value=tagsInput.value="";
+    previewDiv.innerHTML=""; wordCount.textContent="0 字";
+    loadNotes();
+  };
+  document.getElementById("logoutBtn").onclick=async()=>{await fetch("/logout");location.reload()};
+  document.getElementById("themeToggle").onclick=()=>{document.body.classList.toggle("dark");localStorage.setItem("theme",document.body.classList.contains("dark")?"dark":"light")};
+  if(localStorage.getItem("theme")==="dark") document.body.classList.add("dark");
+  loadNotes();
+</script></body></html>`;
 }
